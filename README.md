@@ -49,9 +49,13 @@ Kubernetes would reject because Job specs are immutable.
 ## Layout
 
 ```
-charts/runai-installer/     wrapper chart (RBAC, values ConfigMap, Job)
-argocd/                     the ArgoCD Application to apply
+charts/runai-installer/                 wrapper chart (RBAC, values ConfigMap, Job)
+charts/runai-installer/environments/    per-environment values, including the version
+argocd/                                 the ArgoCD Application to apply
 ```
+
+Everything an operator changes lives in the environment values file, so the Application manifest
+is applied once and never touched again.
 
 ## Prerequisites
 
@@ -69,13 +73,19 @@ kubectl -n runai-installer create secret generic runai-cp-secret-values \
 
 ## Install
 
+1. Copy `charts/runai-installer/environments/lab-itay-26.yaml` to a file for your environment and
+   set the domain, ingress class, target version and any other chart values.
+2. Point `spec.source.helm.valueFiles` in `argocd/application-control-plane.yaml` at it.
+3. Apply it once:
+
 ```sh
 kubectl apply -f argocd/application-control-plane.yaml
 ```
 
 ## Upgrade
 
-Edit `chart.version` in `argocd/application-control-plane.yaml`, commit, and let ArgoCD sync.
+Edit `chart.version` in your environment values file, commit, push. ArgoCD renders a new Job name
+and runs `helm upgrade --install` at the new version. Nothing is applied by hand.
 
 ## Verify
 
