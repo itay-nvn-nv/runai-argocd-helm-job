@@ -1,0 +1,9 @@
+apiVersion: v2
+name: runai-installer
+description: >-
+  Runs the documented NVIDIA Run:ai "helm upgrade -i" command as an in-cluster Job,
+  so ArgoCD can drive installs and upgrades through real Helm instead of rendering
+  the product chart with "helm template".
+type: application
+version: 0.1.0
+appVersion: "1.0"

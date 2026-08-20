@@ -1,0 +1,13 @@
+# Content-addressed: the name carries the values hash, so the Job always mounts
+# an immutable ConfigMap that matches it. Superseded ConfigMaps leave the
+# rendered manifest set and ArgoCD prunes them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "runai-installer.valuesConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "runai-installer.labels" . | nindent 4 }}
+data:
+  values.yaml: |
+{{ .Values.controlPlaneValues | indent 4 }}

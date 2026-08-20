@@ -1,0 +1,130 @@
+{{- $secretValues := .Values.secretValues.existingSecret -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Name carries the chart version and a hash of the inputs. Bumping the version
+  # in git therefore produces a new Job rather than trying to patch an existing
+  # one, which Kubernetes would reject because Job specs are immutable.
+  name: {{ include "runai-installer.jobName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "runai-installer.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # Keep superseded Jobs as the upgrade audit trail instead of letting prune
+    # delete them, and stop ArgoCD reporting them as out-of-sync once they are no
+    # longer part of the rendered manifest set.
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+spec:
+  backoffLimit: {{ .Values.installer.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.installer.activeDeadlineSeconds | default 2700 }}
+  template:
+    metadata:
+      labels:
+        {{- include "runai-installer.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ .Values.installer.serviceAccountName }}
+      containers:
+        - name: helm
+          image: {{ .Values.installer.image }}
+          imagePullPolicy: {{ .Values.installer.imagePullPolicy }}
+          command: ["/bin/sh", "-c"]
+          env:
+            - name: CHART_REPO
+              value: {{ .Values.chart.repo | quote }}
+            - name: CHART_NAME
+              value: {{ .Values.chart.name | quote }}
+            - name: CHART_VERSION
+              value: {{ .Values.chart.version | quote }}
+            - name: RELEASE_NAME
+              value: {{ .Values.release.name | quote }}
+            - name: RELEASE_NAMESPACE
+              value: {{ .Values.release.namespace | quote }}
+            - name: HELM_TIMEOUT
+              value: {{ .Values.helm.timeout | quote }}
+            - name: HELM_WAIT
+              value: {{ .Values.helm.wait | quote }}
+            - name: HELM_ATOMIC
+              value: {{ .Values.helm.atomic | quote }}
+            {{- if .Values.chart.auth.existingSecret }}
+            - name: REPO_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.chart.auth.existingSecret }}
+                  key: username
+            - name: REPO_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.chart.auth.existingSecret }}
+                  key: password
+            {{- end }}
+            # Helm writes cache, config and data under $HOME.
+            - name: HOME
+              value: /tmp
+          args:
+            - |
+              set -eu
+
+              echo "=== helm client ==="
+              helm version --short
+
+              echo "=== add chart repo: $CHART_REPO ==="
+              if [ -n "${REPO_USER:-}" ]; then
+                helm repo add runai "$CHART_REPO" --force-update \
+                  --username "$REPO_USER" --password "$REPO_PASS"
+              else
+                helm repo add runai "$CHART_REPO" --force-update
+              fi
+              helm repo update
+
+              # The documented command. "upgrade --install" is what the Run:ai
+              # install docs use, which is why one code path covers the first
+              # install and every later upgrade.
+              set -- upgrade --install "$RELEASE_NAME" "runai/$CHART_NAME" \
+                --namespace "$RELEASE_NAMESPACE" \
+                --create-namespace \
+                --version "$CHART_VERSION" \
+                -f /values/values.yaml
+
+              if [ -f /secret-values/values.yaml ]; then
+                set -- "$@" -f /secret-values/values.yaml
+              fi
+              if [ "$HELM_WAIT" = "true" ]; then
+                set -- "$@" --wait --timeout "$HELM_TIMEOUT"
+              fi
+              if [ "$HELM_ATOMIC" = "true" ]; then
+                set -- "$@" --atomic
+              fi
+
+              echo "=== helm $* ==="
+              helm "$@"
+
+              echo "=== release state ==="
+              helm list -n "$RELEASE_NAMESPACE"
+              helm history "$RELEASE_NAME" -n "$RELEASE_NAMESPACE" --max 10
+          volumeMounts:
+            - name: values
+              mountPath: /values
+              readOnly: true
+            {{- if $secretValues }}
+            - name: secret-values
+              mountPath: /secret-values
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.installer.resources | nindent 12 }}
+      volumes:
+        - name: values
+          configMap:
+            name: {{ include "runai-installer.valuesConfigMapName" . }}
+        {{- if $secretValues }}
+        - name: secret-values
+          secret:
+            secretName: {{ $secretValues }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}

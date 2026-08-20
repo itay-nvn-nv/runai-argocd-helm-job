@@ -1,0 +1,69 @@
+# Wrapper chart values. This chart renders only a ServiceAccount, RBAC, a values
+# ConfigMap and a Job. It contains no lookup calls and no random functions, so it
+# renders identically every time and is safe for ArgoCD to template.
+
+nameOverride: ""
+
+# Bump to force the Job to re-run without changing the version or the values,
+# for example after rotating the contents of secretValues.existingSecret.
+runCounter: 1
+
+# The Run:ai release the Job manages.
+release:
+  name: runai-backend
+  namespace: runai-backend
+
+# The Run:ai chart the Job installs or upgrades.
+chart:
+  repo: https://runai.jfrog.io/artifactory/cp-charts-prod
+  name: control-plane
+  version: "2.25.13"
+  # For the NGC distribution path, create a Secret with keys "username" and
+  # "password" ($oauthtoken / NGC API key) and name it here.
+  auth:
+    existingSecret: ""
+
+helm:
+  # Passed to --timeout. Keep installer.activeDeadlineSeconds comfortably above
+  # this so Kubernetes does not kill the Job before Helm gives up on its own.
+  timeout: 20m
+  # Wait for all resources to become ready so the Job result is a truthful
+  # signal for ArgoCD health. Not in the docs command, deliberate addition.
+  wait: true
+  # Roll back automatically on a failed upgrade. Off by default because it
+  # discards the broken state that support would want to inspect.
+  atomic: false
+
+installer:
+  # Helm 3. The Run:ai docs require 3.14 or later, and warn that Helm 4 defaults
+  # to server-side apply, which conflicts with resources the Run:ai operator
+  # manages. Pin a 3.x tag rather than a floating one.
+  image: alpine/helm:3.19.5
+  imagePullPolicy: IfNotPresent
+  serviceAccountName: runai-installer
+  backoffLimit: 1
+  activeDeadlineSeconds: 2700
+  # Deliberately no ttlSecondsAfterFinished. A TTL would delete the completed
+  # Job, ArgoCD would see a tracked resource go missing, and selfHeal would
+  # recreate it, re-running Helm in a loop. Completed Jobs are the audit trail.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Non-sensitive values for the Run:ai chart, passed verbatim as -f values.yaml.
+# Keep credentials out of this block, it lives in git.
+controlPlaneValues: |
+  global:
+    domain: example.local
+    ingress:
+      ingressClass: haproxy
+
+# Sensitive values for the Run:ai chart, supplied out of band as a Secret with a
+# "values.yaml" key. Mounted and passed as a second -f, which Helm merges over
+# the ConfigMap values.
+secretValues:
+  existingSecret: ""
