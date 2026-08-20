@@ -10,50 +10,19 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     # The Application owns only the installer objects. The Run:ai release itself
-    # is owned by Helm, in the namespace named under release.namespace below.
+    # is owned by Helm, in the namespace named by release.namespace in the
+    # environment values file.
     namespace: runai-installer
   source:
     repoURL: https://github.com/itay-nvn-nv/runai-argocd-helm-job.git
     targetRevision: main
     path: charts/runai-installer
     helm:
-      values: |
-        release:
-          name: runai-backend
-          namespace: runai-backend
-
-        chart:
-          repo: https://runai.jfrog.io/artifactory/cp-charts-prod
-          name: control-plane
-          # ---------------------------------------------------------------
-          # THE ONLY LINE THAT CHANGES FOR AN UPGRADE.
-          # Bump it, commit, and ArgoCD renders a new Job name, which runs
-          # "helm upgrade --install" at the new version.
-          # ---------------------------------------------------------------
-          version: "2.25.13"
-
-        # Sensitive values are supplied by this Secret, created out of band in the
-        # installer namespace, so they never enter git. Helm merges it over the
-        # values below.
-        secretValues:
-          existingSecret: runai-cp-secret-values
-
-        controlPlaneValues: |
-          global:
-            domain: itay-26-latest.runailabs-cs.com
-            ingress:
-              ingressClass: haproxy
-            imagePullSecrets:
-              - name: runai-reg-creds
-            config:
-              kubernetesDistribution: kubernetes
-              serviceMonitorEnabled: false
-              tracingEnabled: false
-            customCA:
-              enabled: false
-          diagnosticsService:
-            config:
-              enableNvTelemetry: false
+      # All environment-specific configuration, including the Run:ai version,
+      # lives in this file in git. Upgrading is a one-line commit there; this
+      # Application manifest does not need to be touched again.
+      valueFiles:
+        - environments/lab-itay-26.yaml
   syncPolicy:
     automated:
       prune: true

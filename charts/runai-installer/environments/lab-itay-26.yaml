@@ -1,0 +1,42 @@
+# Environment: itay-26-latest lab
+#
+# This file is the GitOps surface. Everything an operator changes for an install
+# or an upgrade lives here, so a version bump is a one-line commit and nothing
+# needs to be applied by hand.
+
+release:
+  name: runai-backend
+  namespace: runai-backend
+
+chart:
+  repo: https://runai.jfrog.io/artifactory/cp-charts-prod
+  name: control-plane
+  # -------------------------------------------------------------------------
+  # THE ONLY LINE THAT CHANGES FOR AN UPGRADE.
+  # Bump it and commit. ArgoCD renders a new Job name, which runs
+  # "helm upgrade --install" at the new version against the same release.
+  # -------------------------------------------------------------------------
+  version: "2.25.13"
+
+# Sensitive values come from this Secret, created out of band in the installer
+# namespace, so they never enter git. Helm merges it over controlPlaneValues.
+secretValues:
+  existingSecret: runai-cp-secret-values
+
+# Non-sensitive values for the Run:ai control-plane chart, passed verbatim.
+controlPlaneValues: |
+  global:
+    domain: itay-26-latest.runailabs-cs.com
+    ingress:
+      ingressClass: haproxy
+    imagePullSecrets:
+      - name: runai-reg-creds
+    config:
+      kubernetesDistribution: kubernetes
+      serviceMonitorEnabled: false
+      tracingEnabled: false
+    customCA:
+      enabled: false
+  diagnosticsService:
+    config:
+      enableNvTelemetry: false
