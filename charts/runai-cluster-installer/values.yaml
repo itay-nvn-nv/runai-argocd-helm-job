@@ -1,0 +1,116 @@
+# Wrapper chart values. This chart renders a ServiceAccount, RBAC, a values
+# ConfigMap and a Job. It contains no lookup calls and no random functions, so
+# it renders identically every time and is safe for ArgoCD to template.
+#
+# The Job reproduces what the browser "connect your first cluster" wizard does:
+#   1. POST /api/v1/clusters                        -> registers the cluster, returns its UUID
+#   2. GET  /api/v1/clusters/{uuid}/cluster-install-info
+#                                                   -> returns the exact helm command to run
+#   3. runs that helm command                       -> installs the runai-cluster chart
+#   4. GET  /api/v1/clusters/{uuid}                 -> waits until state is Connected
+
+nameOverride: ""
+
+# Bump to force the Job to re-run without changing the version or the values.
+runCounter: 1
+
+cluster:
+  # Wizard question 1: the cluster name shown in the UI.
+  name: runai-cluster
+
+  # Wizard question 2: the URL the cluster is reached on. Leave empty to answer
+  # "same URL as the control plane", which is what a single-cluster install uses.
+  url: ""
+
+  # Normally left empty. The Job resolves the UUID in this order:
+  #   1. this value, when set
+  #   2. cluster.uid recorded in an existing runai-cluster Helm release
+  #   3. a control plane cluster whose name matches cluster.name
+  #   4. a new cluster it registers itself
+  # Set it explicitly only to adopt a cluster that was created by the wizard
+  # before this chart existed.
+  uid: ""
+
+  # Where the runai-cluster release goes. The docs use the "runai" namespace.
+  releaseName: runai-cluster
+  namespace: runai
+
+controlPlane:
+  # Base URL of the control plane, including the scheme.
+  url: ""
+
+  # Secret holding the identity the Job authenticates with. Supported shapes:
+  #   clientId + clientSecret -> grantType client_credentials (a service account)
+  #   username + password     -> grantType password (the global.management user)
+  # Prefer a service account: it is not subject to a first-login password change.
+  auth:
+    existingSecret: ""
+
+  # Only for a control plane behind a certificate the Job cannot verify.
+  caCert:
+    existingSecret: ""
+    key: ca.crt
+  insecureSkipTLSVerify: false
+
+chart:
+  name: runai-cluster
+  # -------------------------------------------------------------------------
+  # The cluster chart version. Also sent as the "version" query parameter to
+  # cluster-install-info, so the control plane generates the command for this
+  # exact version. Keep it equal to the control plane version.
+  # -------------------------------------------------------------------------
+  version: ""
+  # Left empty, the Job uses chartRepoURL from cluster-install-info, which is
+  # what the wizard displays. Set it to pin a mirror instead.
+  repo: ""
+  auth:
+    existingSecret: ""
+
+helm:
+  timeout: 20m
+  wait: true
+  atomic: false
+
+# Extra --set arguments appended after the ones the control plane generates.
+# Helm resolves duplicate --set keys last-one-wins, so this is the way to
+# override a value that cluster-install-info hardcodes.
+setOverrides: {}
+
+wait:
+  # Poll the control plane API until it answers before touching anything, so
+  # this Application does not need a sync-wave relative to the control plane.
+  controlPlaneTimeout: 900
+  # Poll the cluster until it reports Connected, so a failed onboarding shows
+  # up as a failed Job instead of a green sync over a broken cluster.
+  connected: true
+  connectedTimeout: 900
+
+installer:
+  # Needs helm, curl and jq in one image. dtzar/helm-kubectl carries all three
+  # plus bash. Pin a tag rather than a floating one.
+  image: dtzar/helm-kubectl:3.19.0
+  imagePullPolicy: IfNotPresent
+  serviceAccountName: runai-cluster-installer
+  backoffLimit: 1
+  activeDeadlineSeconds: 2700
+  # Deliberately no ttlSecondsAfterFinished. A TTL would delete the completed
+  # Job, ArgoCD would see a tracked resource go missing, and selfHeal would
+  # recreate it, re-running the Job in a loop.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Non-sensitive values for the runai-cluster chart, passed verbatim as
+# -f values.yaml. Applied after the control plane's generated --set arguments,
+# so a key set by both is won by the --set. Use setOverrides for those.
+clusterValues: |
+  {}
+
+# Sensitive values for the runai-cluster chart, supplied out of band as a
+# Secret with a "values.yaml" key.
+secretValues:
+  existingSecret: ""

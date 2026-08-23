@@ -1,0 +1,331 @@
+{{- if not .Values.controlPlane.url }}{{ fail "controlPlane.url is required" }}{{- end }}
+{{- if not .Values.chart.version }}{{ fail "chart.version is required" }}{{- end }}
+{{- if not .Values.controlPlane.auth.existingSecret }}{{ fail "controlPlane.auth.existingSecret is required" }}{{- end }}
+{{- $secretValues := .Values.secretValues.existingSecret -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Name carries the chart version and a hash of the inputs. Bumping the version
+  # in git therefore produces a new Job rather than trying to patch an existing
+  # one, which Kubernetes would reject because Job specs are immutable.
+  name: {{ include "runai-cluster-installer.jobName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "runai-cluster-installer.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # Keep superseded Jobs as the upgrade audit trail instead of letting prune
+    # delete them, and stop ArgoCD reporting them as out-of-sync once they are
+    # no longer part of the rendered manifest set.
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+spec:
+  backoffLimit: {{ .Values.installer.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.installer.activeDeadlineSeconds | default 2700 }}
+  template:
+    metadata:
+      labels:
+        {{- include "runai-cluster-installer.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ .Values.installer.serviceAccountName }}
+      containers:
+        - name: onboard
+          image: {{ .Values.installer.image }}
+          imagePullPolicy: {{ .Values.installer.imagePullPolicy }}
+          command: ["/bin/bash", "-c"]
+          env:
+            - name: CP_URL
+              value: {{ .Values.controlPlane.url | trimSuffix "/" | quote }}
+            - name: CLUSTER_NAME
+              value: {{ .Values.cluster.name | quote }}
+            - name: CLUSTER_UID
+              value: {{ .Values.cluster.uid | default "" | quote }}
+            - name: CLUSTER_URL
+              value: {{ include "runai-cluster-installer.clusterUrl" . | trimSuffix "/" | quote }}
+            - name: RELEASE_NAME
+              value: {{ .Values.cluster.releaseName | quote }}
+            - name: RELEASE_NAMESPACE
+              value: {{ .Values.cluster.namespace | quote }}
+            - name: CHART_NAME
+              value: {{ .Values.chart.name | quote }}
+            - name: CHART_VERSION
+              value: {{ .Values.chart.version | quote }}
+            - name: CHART_REPO
+              value: {{ .Values.chart.repo | default "" | quote }}
+            - name: HELM_TIMEOUT
+              value: {{ .Values.helm.timeout | quote }}
+            - name: HELM_WAIT
+              value: {{ .Values.helm.wait | quote }}
+            - name: HELM_ATOMIC
+              value: {{ .Values.helm.atomic | quote }}
+            - name: INSECURE
+              value: {{ .Values.controlPlane.insecureSkipTLSVerify | quote }}
+            - name: CA_FILE
+              value: {{ if .Values.controlPlane.caCert.existingSecret }}{{ printf "/ca/%s" .Values.controlPlane.caCert.key }}{{ else }}""{{ end }}
+            - name: WAIT_CP_TIMEOUT
+              value: {{ .Values.wait.controlPlaneTimeout | quote }}
+            - name: WAIT_CONNECTED
+              value: {{ .Values.wait.connected | quote }}
+            - name: WAIT_CONNECTED_TIMEOUT
+              value: {{ .Values.wait.connectedTimeout | quote }}
+            - name: SET_OVERRIDES
+              value: |-
+                {{- range $k, $v := .Values.setOverrides }}
+                {{ $k }}={{ $v }}
+                {{- end }}
+            {{- if .Values.chart.auth.existingSecret }}
+            - name: REPO_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.chart.auth.existingSecret }}
+                  key: username
+            - name: REPO_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.chart.auth.existingSecret }}
+                  key: password
+            {{- end }}
+            # Helm writes cache, config and data under $HOME.
+            - name: HOME
+              value: /tmp
+          args:
+            - |
+              set -euo pipefail
+
+              log() { printf '%s  %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+              die() { log "ERROR: $*"; exit 1; }
+              redact() { sed -e 's/\(clientSecret=\)[^ \\]*/\1REDACTED/g' -e 's/"clientSecret":"[^"]*"/"clientSecret":"REDACTED"/g'; }
+
+              CURL=(curl -sS --max-time 60)
+              if [ "$INSECURE" = "true" ]; then CURL+=(-k); fi
+              if [ -n "$CA_FILE" ] && [ -f "$CA_FILE" ]; then CURL+=(--cacert "$CA_FILE"); fi
+
+              # ---------------------------------------------------------------
+              # Identity. A service account (client_credentials) is preferred
+              # over the management user, whose password a first browser login
+              # can be forced to change.
+              # ---------------------------------------------------------------
+              if [ -s /auth/clientId ] && [ -s /auth/clientSecret ]; then
+                GRANT=client_credentials
+                TOKEN_BODY=$(jq -nc --arg i "$(cat /auth/clientId)" --arg s "$(cat /auth/clientSecret)" \
+                  '{grantType:"client_credentials",clientID:$i,clientSecret:$s}')
+              elif [ -s /auth/username ] && [ -s /auth/password ]; then
+                GRANT=password
+                TOKEN_BODY=$(jq -nc --arg u "$(cat /auth/username)" --arg p "$(cat /auth/password)" \
+                  '{grantType:"password",username:$u,password:$p}')
+              else
+                die "auth Secret must hold either clientId + clientSecret, or username + password"
+              fi
+
+              TOKEN=""
+              authenticate() {
+                local code
+                code=$("${CURL[@]}" -o /tmp/token.json -w '%{http_code}' \
+                  -X POST "$CP_URL/api/v1/token" \
+                  -H 'Content-Type: application/json' -d "$TOKEN_BODY" || echo 000)
+                if [ "$code" != "200" ]; then return 1; fi
+                TOKEN=$(jq -r '.accessToken // empty' /tmp/token.json)
+                if [ -z "$TOKEN" ]; then return 1; fi
+                return 0
+              }
+
+              # Response body lands in /tmp/resp.json, HTTP status on stdout.
+              api() {
+                local method=$1 path=$2 body=${3:-}
+                local args=(-o /tmp/resp.json -w '%{http_code}' -X "$method"
+                            -H "Authorization: Bearer $TOKEN"
+                            -H 'Content-Type: application/json')
+                if [ -n "$body" ]; then args+=(-d "$body"); fi
+                "${CURL[@]}" "${args[@]}" "$CP_URL$path" || echo 000
+              }
+
+              log "=== tool versions ==="
+              helm version --short
+              curl --version | head -1
+
+              # ---------------------------------------------------------------
+              # 1. Wait for the control plane. This is what lets the cluster
+              #    Application be synced without a wave relative to the control
+              #    plane one: it blocks until the API answers.
+              # ---------------------------------------------------------------
+              log "=== waiting for control plane at $CP_URL (grant: $GRANT) ==="
+              deadline=$(( $(date +%s) + WAIT_CP_TIMEOUT ))
+              until authenticate; do
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  die "control plane did not authenticate within ${WAIT_CP_TIMEOUT}s: $(cat /tmp/token.json 2>/dev/null | redact)"
+                fi
+                log "control plane not ready yet, retrying in 10s"
+                sleep 10
+              done
+              log "authenticated"
+
+              # ---------------------------------------------------------------
+              # 2. Resolve the cluster UUID. Idempotency lives here: a re-run
+              #    must not register a second cluster.
+              # ---------------------------------------------------------------
+              UUID="$CLUSTER_UID"
+              if [ -n "$UUID" ]; then
+                log "using cluster uid pinned in values: $UUID"
+              fi
+
+              if [ -z "$UUID" ] && helm status "$RELEASE_NAME" -n "$RELEASE_NAMESPACE" >/dev/null 2>&1; then
+                UUID=$(helm get values "$RELEASE_NAME" -n "$RELEASE_NAMESPACE" -o json | jq -r '.cluster.uid // empty')
+                if [ -n "$UUID" ]; then log "reusing cluster uid from the existing $RELEASE_NAME release: $UUID"; fi
+              fi
+
+              if [ -z "$UUID" ]; then
+                code=$(api GET /api/v1/clusters)
+                if [ "$code" != "200" ]; then die "GET /api/v1/clusters returned $code: $(cat /tmp/resp.json)"; fi
+                UUID=$(jq -r --arg n "$CLUSTER_NAME" '[.[] | select(.name==$n)] | first | .uuid // empty' /tmp/resp.json)
+                if [ -n "$UUID" ]; then log "adopting the control plane cluster already named '$CLUSTER_NAME': $UUID"; fi
+              fi
+
+              if [ -z "$UUID" ]; then
+                log "registering cluster '$CLUSTER_NAME'"
+                code=$(api POST /api/v1/clusters "$(jq -nc --arg n "$CLUSTER_NAME" '{name:$n}')")
+                if [ "$code" != "201" ] && [ "$code" != "200" ]; then
+                  die "POST /api/v1/clusters returned $code: $(cat /tmp/resp.json)"
+                fi
+                UUID=$(jq -r '.uuid' /tmp/resp.json)
+                log "registered: $UUID"
+              fi
+
+              # ---------------------------------------------------------------
+              # 3. Ask the control plane for the install command. This is the
+              #    same call the browser wizard makes, so the flags below are
+              #    the product's own, not ours.
+              # ---------------------------------------------------------------
+              log "=== fetching cluster-install-info (version=$CHART_VERSION, remoteClusterUrl=$CLUSTER_URL) ==="
+              code=$("${CURL[@]}" -o /tmp/info.json -w '%{http_code}' -G \
+                -H "Authorization: Bearer $TOKEN" \
+                --data-urlencode "version=$CHART_VERSION" \
+                --data-urlencode "remoteClusterUrl=$CLUSTER_URL" \
+                "$CP_URL/api/v1/clusters/$UUID/cluster-install-info" || echo 000)
+              if [ "$code" != "200" ]; then die "cluster-install-info returned $code: $(cat /tmp/info.json | redact)"; fi
+
+              INSTALL_STR=$(jq -r '.installationStr' /tmp/info.json)
+              log "control plane generated:"
+              printf '%s\n' "$INSTALL_STR" | redact | sed 's/^/    /'
+
+              REPO="$CHART_REPO"
+              if [ -z "$REPO" ]; then REPO=$(jq -r '.chartRepoURL' /tmp/info.json); fi
+              log "chart repo: $REPO"
+
+              # Take the --set arguments verbatim from the generated command, so
+              # cluster.uid, controlPlane.clientSecret, the URLs and whatever
+              # else the control plane derives from its own install (ingress
+              # class, FIPS mode) are exactly what the wizard would have used.
+              mapfile -t SETS < <(printf '%s\n' "$INSTALL_STR" \
+                | grep -oE -e '--set[[:space:]]+[^[:space:]\\]+' \
+                | awk '{print $2}')
+              if [ "${#SETS[@]}" -eq 0 ]; then die "no --set arguments found in installationStr"; fi
+              log "adopting ${#SETS[@]} --set arguments from the control plane"
+
+              # ---------------------------------------------------------------
+              # 4. Run the documented command.
+              # ---------------------------------------------------------------
+              if [ -n "${REPO_USER:-}" ]; then
+                helm repo add runai "$REPO" --force-update --username "$REPO_USER" --password "$REPO_PASS"
+              else
+                helm repo add runai "$REPO" --force-update
+              fi
+              helm repo update
+
+              ARGS=(upgrade --install "$RELEASE_NAME" "runai/$CHART_NAME"
+                    --namespace "$RELEASE_NAMESPACE" --create-namespace
+                    --version "$CHART_VERSION")
+              for s in "${SETS[@]}"; do ARGS+=(--set "$s"); done
+              ARGS+=(-f /values/values.yaml)
+              if [ -f /secret-values/values.yaml ]; then ARGS+=(-f /secret-values/values.yaml); fi
+              # Operator overrides go last: Helm resolves duplicate --set keys
+              # last-one-wins, so this beats anything above.
+              while IFS= read -r s; do
+                if [ -n "$s" ]; then ARGS+=(--set "$s"); fi
+              done <<< "$SET_OVERRIDES"
+              if [ "$HELM_WAIT" = "true" ]; then ARGS+=(--wait --timeout "$HELM_TIMEOUT"); fi
+              if [ "$HELM_ATOMIC" = "true" ]; then ARGS+=(--atomic); fi
+
+              log "=== helm ${ARGS[*]} ==="
+              printf 'helm %s\n' "${ARGS[*]}" | redact | sed 's/^/    /'
+              helm "${ARGS[@]}"
+
+              log "=== release state ==="
+              helm list -n "$RELEASE_NAMESPACE"
+              helm history "$RELEASE_NAME" -n "$RELEASE_NAMESPACE" --max 10
+
+              # ---------------------------------------------------------------
+              # 5. Wait until the control plane agrees the cluster is up, so a
+              #    green Application means a connected cluster.
+              # ---------------------------------------------------------------
+              if [ "$WAIT_CONNECTED" != "true" ]; then
+                log "not waiting for the cluster to connect (wait.connected=false)"
+                exit 0
+              fi
+
+              log "=== waiting for cluster $UUID to report Connected ==="
+              deadline=$(( $(date +%s) + WAIT_CONNECTED_TIMEOUT ))
+              while :; do
+                code=$(api GET "/api/v1/clusters/$UUID")
+                if [ "$code" = "401" ]; then
+                  log "token expired, re-authenticating"
+                  authenticate || die "re-authentication failed"
+                  continue
+                fi
+                if [ "$code" = "200" ]; then
+                  STATE=$(jq -r '.status.state // "Unknown"' /tmp/resp.json)
+                  if [ "$STATE" = "Connected" ]; then
+                    log "cluster is Connected"
+                    break
+                  fi
+                  log "cluster state: $STATE"
+                else
+                  log "GET cluster returned $code"
+                fi
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  log "last cluster payload:"
+                  jq . /tmp/resp.json 2>/dev/null | sed 's/^/    /' || true
+                  die "cluster did not reach Connected within ${WAIT_CONNECTED_TIMEOUT}s"
+                fi
+                sleep 15
+              done
+          volumeMounts:
+            - name: values
+              mountPath: /values
+              readOnly: true
+            - name: auth
+              mountPath: /auth
+              readOnly: true
+            {{- if .Values.controlPlane.caCert.existingSecret }}
+            - name: ca
+              mountPath: /ca
+              readOnly: true
+            {{- end }}
+            {{- if $secretValues }}
+            - name: secret-values
+              mountPath: /secret-values
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.installer.resources | nindent 12 }}
+      volumes:
+        - name: values
+          configMap:
+            name: {{ include "runai-cluster-installer.valuesConfigMapName" . }}
+        - name: auth
+          secret:
+            secretName: {{ .Values.controlPlane.auth.existingSecret }}
+        {{- if .Values.controlPlane.caCert.existingSecret }}
+        - name: ca
+          secret:
+            secretName: {{ .Values.controlPlane.caCert.existingSecret }}
+        {{- end }}
+        {{- if $secretValues }}
+        - name: secret-values
+          secret:
+            secretName: {{ $secretValues }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}

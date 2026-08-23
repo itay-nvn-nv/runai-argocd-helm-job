@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: runai-cluster
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    # The Application owns only the installer objects. The runai-cluster
+    # release itself is owned by Helm, in the namespace named by
+    # cluster.namespace in the environment values file.
+    namespace: runai-installer
+  source:
+    repoURL: https://github.com/itay-nvn-nv/runai-argocd-helm-job.git
+    targetRevision: main
+    path: charts/runai-cluster-installer
+    helm:
+      valueFiles:
+        - environments/lab-itay-26.yaml
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

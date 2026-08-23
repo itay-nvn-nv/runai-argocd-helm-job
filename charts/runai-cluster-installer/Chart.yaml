@@ -1,0 +1,10 @@
+apiVersion: v2
+name: runai-cluster-installer
+description: >-
+  Registers a cluster with an NVIDIA Run:ai control plane and runs the
+  "helm upgrade -i runai-cluster" command the control plane itself generates,
+  as an in-cluster Job, so ArgoCD can drive the first-cluster onboarding that
+  the browser wizard normally performs by hand.
+type: application
+version: 0.1.0
+appVersion: "1.0"
