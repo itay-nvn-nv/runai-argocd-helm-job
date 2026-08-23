@@ -4,6 +4,10 @@
 # changes lives here, so onboarding a cluster or moving it to a new version is a
 # one-line commit and nothing needs to be clicked in the wizard.
 
+# Bumped to force the Job to run again without changing the version, to prove a
+# re-run adopts the cluster it already registered instead of creating a second.
+runCounter: 2
+
 controlPlane:
   url: https://itay-26-latest.runailabs-cs.com
   # Secret created out of band in the installer namespace, holding either
