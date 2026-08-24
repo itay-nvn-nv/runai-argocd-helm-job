@@ -1,0 +1,50 @@
+# Flux entry point, part 2 of 2 (cluster stage).
+#
+# Mirrors control-plane.yaml exactly in structure. Both point at the same
+# GitRepository source. Nothing in charts/ is aware of which adapter applied it.
+#
+# No dependsOn is needed. The Job inside the wrapper authenticates to the
+# control plane API and polls until it responds before proceeding, so ordering
+# is enforced by the cluster itself, not by Flux's dependency graph.
+#
+# Compare with adapters/argocd/application-cluster.yaml. Both reference the same
+# chart path and environments file. The chart is identical regardless of which
+# tool applies it.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: runai-cluster
+  namespace: flux-system
+spec:
+  interval: 5m
+  releaseName: runai-cluster-installer
+  targetNamespace: runai-installer
+  storageNamespace: runai-installer
+  # The cluster-stage Job authenticates to the control plane, registers the
+  # cluster, runs the full helm upgrade --install of runai-cluster, then polls
+  # until the cluster reports Connected. That can take 20+ minutes. Flux waits
+  # because helm --wait is on by default, so this timeout is what makes
+  # "HelmRelease Ready" mean "cluster is Connected", not "Job was created".
+  timeout: 40m
+  install:
+    createNamespace: true
+    timeout: 40m
+  upgrade:
+    timeout: 40m
+    remediation:
+      # Same rationale as control-plane.yaml: a failed wrapper upgrade should
+      # be visible, not silently rolled back. The inner release is recovered by
+      # fixing the environments file and pushing, not by rolling back the outer.
+      remediateLastFailure: false
+  chart:
+    spec:
+      chart: charts/runai-cluster-installer
+      sourceRef:
+        kind: GitRepository
+        name: runai-installer
+        namespace: flux-system
+      # Paths are relative to the repository root. values.yaml is not implicit
+      # in Flux the way it is in Helm, so it must be listed explicitly first.
+      valuesFiles:
+        - charts/runai-cluster-installer/values.yaml
+        - charts/runai-cluster-installer/environments/lab-itay-26.yaml

@@ -1,0 +1,15 @@
+# Flux entry point, part 1 of 2: where the wrapper charts come from.
+#
+# One GitRepository serves both stages. Flux polls it on the interval below and
+# produces a new artifact revision whenever the branch moves, which is what makes
+# a version bump in an environments/ file turn into a run.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: runai-installer
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/itay-nvn-nv/runai-argocd-helm-job.git
+  ref:
+    branch: main

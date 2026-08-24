@@ -9,13 +9,13 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "runai-installer.labels" . | nindent 4 }}
+  {{- with .Values.installer.jobAnnotations }}
+  # Deliberately empty by default. Nothing here is required for the Job to work,
+  # which is what keeps this chart consumable by any CD tool. See
+  # adapters/ for the per-tool entry points.
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
-    # Keep superseded Jobs as the upgrade audit trail instead of letting prune
-    # delete them, and stop ArgoCD reporting them as out-of-sync once they are no
-    # longer part of the rendered manifest set.
-    argocd.argoproj.io/sync-options: Prune=false
-    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   backoffLimit: {{ .Values.installer.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.installer.activeDeadlineSeconds | default 2700 }}

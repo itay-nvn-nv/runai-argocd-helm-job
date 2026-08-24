@@ -1,0 +1,48 @@
+# Flux entry point, part 2 of 2: the control plane stage.
+#
+# Flux performs a real "helm install/upgrade" of the *wrapper* chart, and the
+# wrapper's Job then performs the documented "helm upgrade --install" of the
+# Run:ai control-plane chart. Two levels of Helm, deliberately: the outer one is
+# whatever the CD tool happens to do, the inner one is always the command from
+# the docs, which is what makes the method identical across tools.
+#
+# Compare with adapters/argocd/application-control-plane.yaml. Both point at the
+# same chart path and the same environments file. Nothing in charts/ is aware of
+# which of the two applied it.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: runai-control-plane
+  namespace: flux-system
+spec:
+  interval: 5m
+  releaseName: runai-installer
+  targetNamespace: runai-installer
+  storageNamespace: runai-installer
+  # The inner Job runs the real Run:ai install, which takes far longer than
+  # Flux's 5m default. Flux waits for the Job to complete because helm --wait is
+  # on by default, so this timeout is what makes "HelmRelease Ready" mean "Run:ai
+  # is installed" rather than "the Job was created".
+  timeout: 40m
+  install:
+    createNamespace: true
+    timeout: 40m
+  upgrade:
+    timeout: 40m
+    remediation:
+      # A failed wrapper upgrade should be visible, not silently rolled back to a
+      # wrapper revision whose Job already ran. The inner release is recovered by
+      # fixing the environments file, not by rolling back the outer one.
+      remediateLastFailure: false
+  chart:
+    spec:
+      chart: charts/runai-installer
+      sourceRef:
+        kind: GitRepository
+        name: runai-installer
+        namespace: flux-system
+      # Paths are relative to the repository root. values.yaml is not implicit in
+      # Flux the way it is in Helm, so it has to be listed first.
+      valuesFiles:
+        - charts/runai-installer/values.yaml
+        - charts/runai-installer/environments/lab-itay-26.yaml

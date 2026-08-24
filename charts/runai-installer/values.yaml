@@ -44,8 +44,14 @@ installer:
   backoffLimit: 1
   activeDeadlineSeconds: 2700
   # Deliberately no ttlSecondsAfterFinished. A TTL would delete the completed
-  # Job, ArgoCD would see a tracked resource go missing, and selfHeal would
-  # recreate it, re-running Helm in a loop. Completed Jobs are the audit trail.
+  # Job, a CD tool with drift correction would see a tracked resource go missing
+  # and recreate it, re-running Helm in a loop.
+  #
+  # Superseded Jobs are allowed to be pruned by whichever tool applies this. The
+  # upgrade audit trail is "helm history" against the release, which is a better
+  # record than a pile of Job objects and is the same one a hand-run
+  # "helm upgrade" leaves behind.
+  jobAnnotations: {}
   resources:
     requests:
       cpu: 50m
