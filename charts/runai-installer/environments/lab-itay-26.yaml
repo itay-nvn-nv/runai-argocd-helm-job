@@ -16,7 +16,7 @@ chart:
   # Bump it and commit. ArgoCD renders a new Job name, which runs
   # "helm upgrade --install" at the new version against the same release.
   # -------------------------------------------------------------------------
-  version: "2.26.24"
+  version: "2.26.10"
 
 # Sensitive values come from this Secret, created out of band in the installer
 # namespace, so they never enter git. Helm merges it over controlPlaneValues.
