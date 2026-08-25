@@ -5,5 +5,5 @@ description: >-
   so ArgoCD can drive installs and upgrades through real Helm instead of rendering
   the product chart with "helm template".
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "1.0"
