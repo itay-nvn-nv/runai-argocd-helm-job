@@ -43,11 +43,13 @@ spec:
         namespace: flux-system
       # Paths are relative to the repository root. values.yaml is not implicit in
       # Flux the way it is in Helm, so it has to be listed first.
+      # ${ENV_NAME} is substituted at apply time by adapters/apply.sh.
+      # Do not kubectl apply this file directly.
       valuesFiles:
         - charts/runai-installer/values.yaml
-        - charts/runai-installer/environments/lab-itay-26.yaml
+        - charts/runai-installer/environments/${ENV_NAME}.yaml
       # UPGRADE WORKFLOW: Flux uses Chart.yaml version — not the git commit — to
       # decide whether to repackage. An upgrade commit must therefore bump two lines:
-      #   1. chart.version in environments/lab-itay-26.yaml  (inner Run:ai version)
+      #   1. chart.version in environments/${ENV_NAME}.yaml  (inner Run:ai version)
       #   2. version in charts/runai-installer/Chart.yaml    (wrapper chart version)
       # Bumping only the environments file does not trigger a new Flux reconcile.

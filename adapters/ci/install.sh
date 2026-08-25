@@ -7,16 +7,17 @@
 # is that the outer Helm call happens in your pipeline rather than in the cluster.
 #
 # Usage:
-#   ./adapters/ci/install.sh [<env-values-relative-path>]
+#   ./adapters/ci/install.sh [<env-name> | <env-path>]
 #
-# The optional argument is a path to an environments file, relative to the chart
-# root. Defaults to environments/lab-itay-26.yaml. For a real deployment, create
-# an environments/<target>.yaml file and pass it here.
+# The argument is either a bare environment name (e.g. "lab-itay-26") or a
+# path to an environments file relative to each chart root (e.g.
+# "environments/lab-itay-26.yaml"). Both forms are equivalent. Defaults to
+# the ENV_NAME environment variable if set, otherwise requires an argument.
 #
 # Prerequisites (same as every adapter):
 #   - KUBECONFIG pointing at the target cluster
 #   - runai-installer namespace exists with:
-#       runai-cp-admin        (username/password for the cluster-installer Job)
+#       runai-cp-admin         (username/password for the cluster-installer Job)
 #       runai-cp-secret-values (sensitive Helm values for the control plane)
 #   - Registry credential Secrets in runai-backend and runai namespaces
 #
@@ -27,7 +28,23 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-ENV_PATH="${1:-environments/lab-itay-26.yaml}"
+
+# Accept bare name ("lab-itay-26") or full relative path
+# ("environments/lab-itay-26.yaml"). Fall back to $ENV_NAME if set.
+ARG="${1:-${ENV_NAME:-}}"
+if [[ -z "$ARG" ]]; then
+  echo "ERROR: pass an environment name or set ENV_NAME" >&2
+  echo "Usage: $0 <env-name>  (e.g. lab-itay-26)" >&2
+  exit 1
+fi
+
+if [[ "$ARG" == environments/* ]] || [[ "$ARG" == *.yaml ]]; then
+  ENV_PATH="$ARG"
+else
+  ENV_PATH="environments/${ARG}.yaml"
+fi
+
+echo "==> Environment: ${ENV_PATH}"
 
 echo "==> Control plane stage"
 helm upgrade --install runai-installer "${REPO_ROOT}/charts/runai-installer" \

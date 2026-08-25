@@ -18,8 +18,10 @@ spec:
     targetRevision: main
     path: charts/runai-cluster-installer
     helm:
+      # ${ENV_NAME} is substituted at apply time by adapters/apply.sh.
+      # Do not kubectl apply this file directly.
       valueFiles:
-        - environments/lab-itay-26.yaml
+        - environments/${ENV_NAME}.yaml
   syncPolicy:
     automated:
       prune: true

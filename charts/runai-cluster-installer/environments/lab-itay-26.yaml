@@ -29,7 +29,7 @@ chart:
   # THE ONLY LINE THAT CHANGES FOR AN UPGRADE.
   # Keep it equal to the control plane version.
   # -------------------------------------------------------------------------
-  version: "2.26.24"
+  version: "2.26.10"
 
 # Everything the cluster needs beyond what the control plane generates. The
 # control plane already supplies cluster.uid, controlPlane.url,

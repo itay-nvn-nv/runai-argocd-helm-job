@@ -21,8 +21,11 @@ spec:
       # All environment-specific configuration, including the Run:ai version,
       # lives in this file in git. Upgrading is a one-line commit there; this
       # Application manifest does not need to be touched again.
+      #
+      # ${ENV_NAME} is substituted at apply time by adapters/apply.sh.
+      # Do not kubectl apply this file directly.
       valueFiles:
-        - environments/lab-itay-26.yaml
+        - environments/${ENV_NAME}.yaml
   syncPolicy:
     automated:
       prune: true
