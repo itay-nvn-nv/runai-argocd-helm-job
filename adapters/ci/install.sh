@@ -46,14 +46,40 @@ fi
 
 echo "==> Environment: ${ENV_PATH}"
 
+# helm --wait on a chart that contains a Job waits for the Job pod to be
+# Running, not for the Job to Complete. We therefore wait explicitly for the
+# inner Job to reach a terminal state before proceeding to the next stage.
+wait_for_job() {
+  local NAMESPACE="$1" LABEL_SELECTOR="$2" TIMEOUT="${3:-2400}"
+  local JOB
+  JOB=$(kubectl -n "$NAMESPACE" get job -l "$LABEL_SELECTOR" \
+    --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null)
+  if [[ -z "$JOB" ]]; then
+    echo "ERROR: no Job found with selector $LABEL_SELECTOR in $NAMESPACE" >&2
+    return 1
+  fi
+  echo "    waiting for Job $JOB to complete (timeout ${TIMEOUT}s)..."
+  kubectl -n "$NAMESPACE" wait "job/$JOB" \
+    --for=condition=Complete --timeout="${TIMEOUT}s" 2>/dev/null && return 0
+  # If Complete timed out, check if it failed
+  kubectl -n "$NAMESPACE" wait "job/$JOB" \
+    --for=condition=Failed --timeout=5s 2>/dev/null && {
+    echo "ERROR: Job $JOB failed" >&2
+    kubectl -n "$NAMESPACE" logs "job/$JOB" --tail=20 >&2
+    return 1
+  }
+  echo "ERROR: Job $JOB did not complete within ${TIMEOUT}s" >&2
+  return 1
+}
+
 echo "==> Control plane stage"
 helm upgrade --install runai-installer "${REPO_ROOT}/charts/runai-installer" \
   -f "${REPO_ROOT}/charts/runai-installer/values.yaml" \
   -f "${REPO_ROOT}/charts/runai-installer/${ENV_PATH}" \
   --namespace runai-installer \
   --create-namespace \
-  --wait \
   --timeout 40m
+wait_for_job runai-installer app.kubernetes.io/name=runai-installer 2400
 
 echo "==> Cluster stage"
 helm upgrade --install runai-cluster-installer "${REPO_ROOT}/charts/runai-cluster-installer" \
@@ -61,8 +87,8 @@ helm upgrade --install runai-cluster-installer "${REPO_ROOT}/charts/runai-cluste
   -f "${REPO_ROOT}/charts/runai-cluster-installer/${ENV_PATH}" \
   --namespace runai-installer \
   --create-namespace \
-  --wait \
   --timeout 40m
+wait_for_job runai-installer app.kubernetes.io/name=runai-cluster-installer 2400
 
 echo "==> Done. Verify with:"
 echo "    helm -n runai-backend list"
