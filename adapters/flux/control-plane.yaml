@@ -46,3 +46,8 @@ spec:
       valuesFiles:
         - charts/runai-installer/values.yaml
         - charts/runai-installer/environments/lab-itay-26.yaml
+      # UPGRADE WORKFLOW: Flux uses Chart.yaml version — not the git commit — to
+      # decide whether to repackage. An upgrade commit must therefore bump two lines:
+      #   1. chart.version in environments/lab-itay-26.yaml  (inner Run:ai version)
+      #   2. version in charts/runai-installer/Chart.yaml    (wrapper chart version)
+      # Bumping only the environments file does not trigger a new Flux reconcile.

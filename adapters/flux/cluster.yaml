@@ -48,3 +48,5 @@ spec:
       valuesFiles:
         - charts/runai-cluster-installer/values.yaml
         - charts/runai-cluster-installer/environments/lab-itay-26.yaml
+      # UPGRADE WORKFLOW: same two-line rule as control-plane.yaml. Bump both
+      # chart.version in the environments file and version in Chart.yaml together.
