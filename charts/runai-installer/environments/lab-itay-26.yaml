@@ -4,6 +4,10 @@
 # or an upgrade lives here, so a version bump is a one-line commit and nothing
 # needs to be applied by hand.
 
+# Bump to force a new Job name when version hasn't changed (e.g. after a wipe
+# and reinstall that left orphaned Jobs with the same name in the namespace).
+runCounter: 2
+
 release:
   name: runai-backend
   namespace: runai-backend

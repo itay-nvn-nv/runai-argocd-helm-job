@@ -6,7 +6,7 @@
 
 # Bumped to force the Job to run again without changing the version, to prove a
 # re-run adopts the cluster it already registered instead of creating a second.
-runCounter: 2
+runCounter: 3
 
 controlPlane:
   url: https://itay-26-latest.runailabs-cs.com
