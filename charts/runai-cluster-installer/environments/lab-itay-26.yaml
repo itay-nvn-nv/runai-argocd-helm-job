@@ -1,14 +1,14 @@
-# Environment: itay-26-latest lab
-#
-# This file is the GitOps surface for the cluster stage. Everything an operator
-# changes lives here, so onboarding a cluster or moving it to a new version is a
-# one-line commit and nothing needs to be clicked in the wizard.
+# ── Environment-specific values ─────────────────────────────────────────────
+# These are the only fields that change between environments. Everything else
+# is either chart-level configuration (values.yaml) or generic cluster values.
 
 # Bumped to force the Job to run again without changing the version, to prove a
 # re-run adopts the cluster it already registered instead of creating a second.
 runCounter: 3
 
 controlPlane:
+  # URL of the Run:ai control plane for this environment. The cluster-stage Job
+  # authenticates here and fetches the exact helm command to run.
   url: https://itay-26-latest.runailabs-cs.com
   # Secret created out of band in the installer namespace, holding either
   # username + password or clientId + clientSecret. Never in git.

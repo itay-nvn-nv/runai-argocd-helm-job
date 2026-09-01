@@ -97,6 +97,11 @@ spec:
               if [ "$HELM_ATOMIC" = "true" ]; then
                 set -- "$@" --atomic
               fi
+              # Operator --set overrides go last: Helm resolves duplicate keys
+              # last-one-wins, so these beat anything in -f values.yaml.
+              {{- range $k, $v := .Values.setOverrides }}
+              set -- "$@" --set {{ printf "%s=%s" $k $v | squote }}
+              {{- end }}
 
               echo "=== helm $* ==="
               helm "$@"

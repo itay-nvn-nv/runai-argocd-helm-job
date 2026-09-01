@@ -60,11 +60,20 @@ installer:
       cpu: 500m
       memory: 512Mi
 
+# Individual --set overrides applied last, after -f values.yaml and -f secret-values.
+# Use this for values that differ per environment and should be visible at the
+# top of the environments file rather than buried in controlPlaneValues.
+# Changing any entry here changes the Job name hash and triggers a new run.
+# Example:
+#   setOverrides:
+#     global.domain: runai.example.com
+setOverrides: {}
+
 # Non-sensitive values for the Run:ai chart, passed verbatim as -f values.yaml.
 # Keep credentials out of this block, it lives in git.
+# Environment-specific values (domain, ingress class) belong in setOverrides above.
 controlPlaneValues: |
   global:
-    domain: example.local
     ingress:
       ingressClass: haproxy
 

@@ -15,7 +15,7 @@ The contents of secretValues.existingSecret are deliberately not hashed. The
 chart never reads the Secret, so rotating it requires bumping runCounter.
 */}}
 {{- define "runai-installer.hash" -}}
-{{- printf "%s|%s|%s|%v" .Values.chart.version .Values.controlPlaneValues (.Values.secretValues.existingSecret | default "") .Values.runCounter | sha256sum | trunc 8 -}}
+{{- printf "%s|%s|%s|%s|%v" .Values.chart.version .Values.controlPlaneValues (.Values.secretValues.existingSecret | default "") (.Values.setOverrides | toYaml) .Values.runCounter | sha256sum | trunc 8 -}}
 {{- end -}}
 
 {{/*

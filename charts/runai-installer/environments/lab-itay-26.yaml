@@ -4,6 +4,16 @@
 # or an upgrade lives here, so a version bump is a one-line commit and nothing
 # needs to be applied by hand.
 
+# ── Environment-specific values ─────────────────────────────────────────────
+# These are the only fields that change between environments. Everything else
+# is either chart-level configuration (values.yaml) or generic non-sensitive
+# values (controlPlaneValues below).
+
+# The domain the control plane is served on. Applied as --set global.domain,
+# which means it wins over any domain set in controlPlaneValues.
+setOverrides:
+  global.domain: itay-26-latest.runailabs-cs.com
+
 # Bump to force a new Job name when version hasn't changed (e.g. after a wipe
 # and reinstall that left orphaned Jobs with the same name in the namespace).
 runCounter: 2
@@ -28,9 +38,9 @@ secretValues:
   existingSecret: runai-cp-secret-values
 
 # Non-sensitive values for the Run:ai control-plane chart, passed verbatim.
+# Domain is set via setOverrides above, not here.
 controlPlaneValues: |
   global:
-    domain: itay-26-latest.runailabs-cs.com
     ingress:
       ingressClass: haproxy
     imagePullSecrets:
